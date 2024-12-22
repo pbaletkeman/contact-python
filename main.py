@@ -18,7 +18,7 @@ ns = api.namespace("contacts", description="CONTACT operations")
 
 address = api.model(
     "Addresses", {
-        "address_id": fields.Integer(readonly=True, description="The address unique identifier"),
+        "address_id": fields.Integer(required=False, description="The address unique identifier"),
         "contact_id": fields.Integer(readonly=True, description="The contact key"),
         "country": fields.String(required=False, description="The contact country"),
         "title": fields.String(required=False, description="The contact title"),
@@ -82,6 +82,7 @@ class ContactDAO(object):
                 # Execute a command: this creates a new table
                 cur.execute(create_contact_sql)
                 cur.execute(create_address_sql)
+            conn.commit()
 
     def __init__(self):
         self.create_tables()
@@ -98,7 +99,8 @@ class ContactDAO(object):
         with psycopg.connect("user=" + self.DB_USER + " password=" + self.DB_PASS + " host=" + self.DB_HOST) as conn:
             with conn.cursor(row_factory=dict_row) as cur:
                 cur.execute(
-                    "INSERT INTO " + self.contact_table_name + " (birth_date, first_name, last_name, middle_name) VALUES (%s, %s, %s, %s) RETURNING  birth_date, first_name, last_name, middle_name, contact_id",
+                    "INSERT INTO " + self.contact_table_name + " (birth_date, first_name, last_name, middle_name) VALUES (%s, %s, %s, %s) "
+                                                               "RETURNING  birth_date, first_name, last_name, middle_name, contact_id",
                     (data.get("birth_date",None), data.get("first_name",None), data.get("last_name",None), data.get("middle_name",None)))
                 new_contact = cur.fetchone()
                 addresses = data.get("addresses",None)
@@ -106,17 +108,97 @@ class ContactDAO(object):
                     new_addresses: list = []
                     for add in addresses:
                         cur.execute(
-                            "INSERT INTO " + self.address_table_name + " ( contact_id, country, title, postal_code, phone, province, city, street1, street2, email) VALUES ( %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING address_id, contact_id, country, title, postal_code, phone, province, city, street1, street2, email",
-                            ( new_contact.get("contact_id"), add.get("country",None), add.get("title",None), add.get("postal_code",None), add.get("phone",None), add.get("province",None), add.get("city",None), add.get("street1",None), add.get("street2",None), add.get("email",None))
+                            "INSERT INTO " + self.address_table_name + " ( contact_id, country, title, postal_code, phone, province, city, street1, street2, email) "
+                                                                       "VALUES ( %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                                                                       "RETURNING address_id, contact_id, country, title, postal_code, phone, province, city, street1, street2, email",
+                            (new_contact.get("contact_id"),
+                             add.get("country",None),
+                             add.get("title",None),
+                             add.get("postal_code",None),
+                             add.get("phone",None),
+                             add.get("province",None),
+                             add.get("city",None),
+                             add.get("street1",None),
+                             add.get("street2",None),
+                             add.get("email",None))
                         )
                         new_addresses.append(cur.fetchone())
                     new_contact["addresses"] = new_addresses
+                conn.commit()
                 return new_contact
 
     def update(self, contact_id, data):
-        c = self.get(contact_id)
-        c.update(data)
-        return c
+        with psycopg.connect("user=" + self.DB_USER + " password=" + self.DB_PASS + " host=" + self.DB_HOST) as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                # update existing record, default to values from the database
+                cur.execute("SELECT birth_date, first_name, last_name, middle_name FROM " + self.contact_table_name +
+                            " WHERE contact_id=%s", (contact_id,))
+                c = cur.fetchone()
+                cur.execute(
+                    "UPDATE " + self.contact_table_name + " SET birth_date=%s, first_name=%s, last_name=%s, middle_name=%s WHERE contact_id=%s "
+                                                          "RETURNING birth_date, first_name, last_name, middle_name, contact_id",
+                    (data.get("birth_date", c.get("birth_date",None)),
+                     data.get("first_name", c.get("first_name",None)),
+                     data.get("last_name", c.get("last_name", None)),
+                     data.get("middle_name", c.get("middle_name", None)),
+                     contact_id))
+                updated_contact = cur.fetchone()
+                addresses = data.get("addresses", None)
+                if addresses is not None and addresses.__class__ == list and len(addresses) > 0:
+                    updated_addresses: list = []
+                    for add in addresses:
+                        if add.get("address_id") is None or add.get("address_id") < 1:
+                            # add new address for existing contact
+                            cur.execute(
+                                "INSERT INTO " + self.address_table_name + " (contact_id, country, title, postal_code, phone, province, city, street1, street2, email)"
+                                                                           " VALUES ( %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                                (updated_contact.get("contact_id"),
+                                 add.get("country", None),
+                                 add.get("title", None),
+                                 add.get("postal_code", None),
+                                 add.get("phone", None),
+                                 add.get("province", None),
+                                 add.get("city", None),
+                                 add.get("street1", None),
+                                 add.get("street2", None),
+                                 add.get("email", None))
+                            )
+                        else:
+                            # update existing record, default to values from the database
+                            cur.execute("SELECT address_id, country, title, postal_code, phone, province, city, street1, street2, email, contact_id FROM " +
+                                        self.address_table_name + " WHERE address_id=%s AND contact_id=%s", (add.get("address_id"), contact_id))
+                            a = cur.fetchone()
+                            cur.execute("UPDATE " + self.address_table_name + " SET country=%s, title=%s, "
+                                                                              "postal_code=%s, p"
+                                                                              "hone=%s, "
+                                                                              "province=%s, "
+                                                                              "city=%s, "
+                                                                              "street1=%s, "
+                                                                              "street2=%s, "
+                                                                              "email=%s "
+                                                                              "WHERE address_id=%s",
+                                        (add.get("country",a.get("country",None)),
+                                        add.get("title", a.get("title", None)),
+                                        add.get("postal_code", a.get("postal_code", None)),
+                                        add.get("phone", a.get("phone", None)),
+                                        add.get("province", a.get("province", None)),
+                                        add.get("city", a.get("city", None)),
+                                        add.get("street1", a.get("street1", None)),
+                                        add.get("street2", a.get("street2", None)),
+                                        add.get("email", a.get("email", None)),
+                                        a.get("address_id"))
+                                        )
+                    cur.execute(
+                        "SELECT address_id, country, title, postal_code, phone, province, city, street1, street2, email, contact_id FROM " +
+                        self.address_table_name + " WHERE contact_id=%s", (contact_id,))
+                    updated_contact["addresses"] = cur.fetchall()
+                else:
+                    # remove addresses for contact
+                    cur.execute("DELETE FROM " + self.address_table_name + " WHERE contact_id=%s", (contact_id,))
+                    updated_contact["addresses"] = []
+                conn.commit()
+                return updated_contact
+
     def delete(self, contact_id):
         c = self.get(contact_id)
         self.contacts.remove(c)
