@@ -89,6 +89,69 @@ class ContactDAO(object):
         self.counter = 0
         self.contacts = []
 
+    def get_all(self):
+        with psycopg.connect("user=" + self.DB_USER + " password=" + self.DB_PASS + " host=" + self.DB_HOST) as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute("SELECT " + self.contact_table_name + ".birth_date, " +
+                            self.contact_table_name + ".first_name, " +
+                            self.contact_table_name + ".last_name, " +
+                            self.contact_table_name + ".middle_name, " +
+                            self.contact_table_name + ".contact_id,  " +
+
+                            self.address_table_name + ".contact_id as add_contact_id, " +
+                            self.address_table_name + ".address_id, " +
+                            self.address_table_name + ".country, " +
+                            self.address_table_name + ".title, " +
+                            self.address_table_name + ".postal_code, " +
+                            self.address_table_name + ".phone, " +
+                            self.address_table_name + ".province, " +
+                            self.address_table_name + ".city, " +
+                            self.address_table_name + ".street1, " +
+                            self.address_table_name + ".street2, " +
+                            self.address_table_name + ".email " +
+
+                            " FROM " + self.contact_table_name + " left join " + self.address_table_name + " on " +
+                            self.contact_table_name + ".contact_id = " + self.address_table_name + ".contact_id")
+                # " WHERE contact.contact_id in (43,44,45, 46, 47, 48, 49, 50)")
+                contacts = cur.fetchall()
+                if len(contacts) == 0:
+                    api.abort(404, "Contacts Empty")
+
+                c1 = {"birth_date": contacts[0].get("birth_date", None),
+                      "first_name": contacts[0].get("first_name", None),
+                      "last_name": contacts[0].get("last_name", None),
+                      "middle_name": contacts[0].get("middle_name", None),
+                      "contact_id": contacts[0].get("contact_id", None),
+                      }
+
+                listing = []
+                addresses = []
+                temp_a = {}
+                for c in contacts:
+                    if c.get("contact_id") != c1.get("contact_id"):
+                        c1["addresses"] = addresses
+                        listing.append(c1)
+                        addresses = []
+                        c1 = {"birth_date": c.get("birth_date", None),
+                              "first_name": c.get("first_name", None),
+                              "last_name": c.get("last_name", None),
+                              "middle_name": c.get("middle_name", None),
+                              "contact_id": c.get("contact_id", None),
+                              "addresses": None}
+
+                    if c.get("add_contact_id") is not None:
+                        temp_a = {"address_id": c.get("address_id", None), "country": c.get("country", None),
+                             "title": c.get("title", None), "postal_code": c.get("postal_code", None),
+                             "phone": c.get("phone", None), "province": c.get("province", None),
+                             "city": c.get("city", None), "street1": c.get("street1", None),
+                             "street2": c.get("street2", None), "email": c.get("email", None),
+                             "contact_id": c.get("add_contact_id", None)}
+                        addresses.append(temp_a)
+                c1["addresses"] = addresses
+                listing.append(c1)
+                return listing
+
+
     def get(self, contact_id):
         with psycopg.connect("user=" + self.DB_USER + " password=" + self.DB_PASS + " host=" + self.DB_HOST) as conn:
             with conn.cursor(row_factory=dict_row) as cur:
@@ -98,6 +161,7 @@ class ContactDAO(object):
                             self.contact_table_name + ".middle_name, " +
                             self.contact_table_name + ".contact_id,  " +
 
+                            self.address_table_name + ".contact_id as add_contact_id, " +
                             self.address_table_name + ".address_id, " +
                             self.address_table_name + ".country, " +
                             self.address_table_name + ".title, " +
@@ -111,30 +175,30 @@ class ContactDAO(object):
 
                             " FROM " + self.contact_table_name + " left join " + self.address_table_name + " on " +
                             self.contact_table_name + ".contact_id = " + self.address_table_name + ".contact_id where " +
-                            self.contact_table_name + ".contact_id=%s",(str(contact_id),))
+                            self.contact_table_name + ".contact_id in (%s)",(contact_id,))
                 contacts = cur.fetchall()
                 if len(contacts) == 0:
                     api.abort(404, "Contact {} doesn't exist".format(contact_id))
 
-                addresses = []
-                for c in contacts:
-                    a = {"address_id": c.get("address_id", None), "country": c.get("country", None),
-                         "title": c.get("title", None), "postal_code": c.get("postal_code", None),
-                         "phone": c.get("phone", None), "province": c.get("province", None),
-                         "city": c.get("city", None), "street1": c.get("street1", None),
-                         "street2": c.get("street2", None), "email": c.get("email", None),
-                         "contact_id": c.get("contact_id", None)}
-                    addresses.append(a)
+                return self.parse_db_contact(contacts)
 
-                c1 = {"birth_date": contacts[0].get("birth_date", None),
-                      "first_name": contacts[0].get("first_name", None),
-                      "last_name": contacts[0].get("last_name", None),
-                      "middle_name": contacts[0].get("middle_name", None),
-                      "contact_id": contacts[0].get("contact_id", None), "addresses": addresses}
-
-                return c1
-
-
+    def parse_db_contact(self, contacts):
+        addresses = []
+        for c in contacts:
+            if c.get("add_contact_id") is not None:
+                a = {"address_id": c.get("address_id", None), "country": c.get("country", None),
+                     "title": c.get("title", None), "postal_code": c.get("postal_code", None),
+                     "phone": c.get("phone", None), "province": c.get("province", None),
+                     "city": c.get("city", None), "street1": c.get("street1", None),
+                     "street2": c.get("street2", None), "email": c.get("email", None),
+                     "contact_id": c.get("add_contact_id", None)}
+                addresses.append(a)
+        c1 = {"birth_date": contacts[0].get("birth_date", None),
+              "first_name": contacts[0].get("first_name", None),
+              "last_name": contacts[0].get("last_name", None),
+              "middle_name": contacts[0].get("middle_name", None),
+              "contact_id": contacts[0].get("contact_id", None), "addresses": addresses}
+        return c1
 
     def create(self, data):
         with psycopg.connect("user=" + self.DB_USER + " password=" + self.DB_PASS + " host=" + self.DB_HOST) as conn:
@@ -254,7 +318,7 @@ class ContactList(Resource):
     @ns.marshal_list_with(contact)
     def get(self):
         """List all contacts"""
-        return self.contact_dao.contacts
+        return self.contact_dao.get_all()
     @ns.doc("create_contact")
     @ns.expect(contact)
     @ns.marshal_with(contact, code=201)
