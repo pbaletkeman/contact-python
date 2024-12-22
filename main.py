@@ -1,8 +1,9 @@
 import psycopg
 from psycopg.rows import dict_row
 
-from flask import Flask
+from flask import Flask, request
 from flask_restx import Api, Resource, fields
+from flask_restx import reqparse
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 app = Flask(__name__)
@@ -13,6 +14,7 @@ api = Api(
     title="Contact API",
     description="A simple Contact API",
 )
+
 
 ns = api.namespace("contacts", description="CONTACT operations")
 
@@ -90,6 +92,14 @@ class ContactDAO(object):
         self.contacts = []
 
     def get_all(self):
+        # http://127.0.0.1:5000/contacts/?field=first_name&direction=desc
+        parser = reqparse.RequestParser()
+        parser.add_argument('field', type=str, help='Order By Field', location='args')
+        parser.add_argument('direction', type=str, help='Order By Direction', location='args')
+        args = parser.parse_args()
+        field = args["field"] if "field" in args and args["field"] is not None else self .contact_table_name + ".last_name"
+        direction = args["direction"] if "direction" in args and args["direction"] is not None else "DESC"
+
         with psycopg.connect("user=" + self.DB_USER + " password=" + self.DB_PASS + " host=" + self.DB_HOST) as conn:
             with conn.cursor(row_factory=dict_row) as cur:
                 cur.execute("SELECT " + self.contact_table_name + ".birth_date, " +
@@ -111,7 +121,7 @@ class ContactDAO(object):
                             self.address_table_name + ".email " +
 
                             " FROM " + self.contact_table_name + " left join " + self.address_table_name + " on " +
-                            self.contact_table_name + ".contact_id = " + self.address_table_name + ".contact_id")
+                            self.contact_table_name + ".contact_id = " + self.address_table_name + ".contact_id ORDER BY " + field + " " + direction)
                 contacts = cur.fetchall()
                 if len(contacts) == 0:
                     api.abort(404, "Contacts Empty")
