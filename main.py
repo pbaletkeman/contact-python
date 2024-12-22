@@ -1,4 +1,6 @@
 import psycopg
+from psycopg.rows import dict_row
+
 from flask import Flask
 from flask_restx import Api, Resource, fields
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -17,7 +19,7 @@ ns = api.namespace("contacts", description="CONTACT operations")
 address = api.model(
     "Addresses", {
         "address_id": fields.Integer(readonly=True, description="The address unique identifier"),
-        "contact_id": fields.Integer(required=True, description="The contact key"),
+        "contact_id": fields.Integer(readonly=True, description="The contact key"),
         "country": fields.String(required=False, description="The contact country"),
         "title": fields.String(required=False, description="The contact title"),
         "postal_code": fields.String(required=False, description="The address postal code"),
@@ -27,7 +29,6 @@ address = api.model(
         "street1": fields.String(required=False, description="The address street 1"),
         "street2": fields.String(required=False, description="The address street 2"),
         "email": fields.String(required=False, description="The address email"),
-
     }
 )
 
@@ -42,22 +43,23 @@ contact = api.model(
     }
 )
 
-DB_HOST = "localhost"
-DB_USER = "pete"
-DB_PASS = "pete"
-
-
 class ContactDAO(object):
+    DB_HOST = "localhost"
+    DB_USER = "pete"
+    DB_PASS = "pete"
 
-    def create_tables(self, contact_table_name: str, address_table_name: str, drop: bool = False):
-        create_contact_sql = f"CREATE TABLE IF NOT EXISTS {contact_table_name} ("
+    contact_table_name = "contact"
+    address_table_name = "address"
+
+    def create_tables(self, drop: bool = False):
+        create_contact_sql = f"CREATE TABLE IF NOT EXISTS {self.contact_table_name} ("
         create_contact_sql += '"contact_id" serial PRIMARY KEY,'
         create_contact_sql += '"birth_date" date,'
         create_contact_sql += '"first_name" character varying(50),'
         create_contact_sql += '"last_name" character varying(50),'
         create_contact_sql += '"middle_name" character varying(50))'
 
-        create_address_sql = f"CREATE TABLE IF NOT EXISTS {address_table_name} ("
+        create_address_sql = f"CREATE TABLE IF NOT EXISTS {self.address_table_name} ("
         create_address_sql += '"address_id" serial PRIMARY KEY,'
         create_address_sql += 'country character varying(6),'
         create_address_sql += 'title character varying(5),'
@@ -70,96 +72,107 @@ class ContactDAO(object):
         create_address_sql += 'email character varying(250),'
         create_address_sql += '"contact_id" integer)'
 
-        with psycopg.connect("user=" + DB_USER + " password=" + DB_PASS + " host=" + DB_HOST) as conn:
+        with psycopg.connect("user=" + self.DB_USER + " password=" + self.DB_PASS + " host=" + self.DB_HOST) as conn:
             # Open a cursor to perform database operations
             with conn.cursor() as cur:
                 if drop:
                     # remove tables if found
-                    cur.execute("DROP TABLE IF EXISTS " + address_table_name)
-                    cur.execute("DROP TABLE IF EXISTS " + contact_table_name)
+                    cur.execute("DROP TABLE IF EXISTS " + self.address_table_name)
+                    cur.execute("DROP TABLE IF EXISTS " + self.contact_table_name)
                 # Execute a command: this creates a new table
                 cur.execute(create_contact_sql)
                 cur.execute(create_address_sql)
 
     def __init__(self):
-        self.create_tables("aaa", "bbb", drop=True)
+        self.create_tables()
         self.counter = 0
         self.contacts = []
 
     def get(self, contact_id):
-        for contact in self.contacts:
-            if contact["contact_id"] == contact_id:
-                return contact
+        for c in self.contacts:
+            if c["contact_id"] == contact_id:
+                return c
         api.abort(404, "Contact {} doesn't exist".format(contact_id))
 
     def create(self, data):
-        contact = data
-        contact["contact_id"] = self.counter = self.counter + 1
-        self.contacts.append(contact)
-        return contact
+        with psycopg.connect("user=" + self.DB_USER + " password=" + self.DB_PASS + " host=" + self.DB_HOST) as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(
+                    "INSERT INTO " + self.contact_table_name + " (birth_date, first_name, last_name, middle_name) VALUES (%s, %s, %s, %s) RETURNING  birth_date, first_name, last_name, middle_name, contact_id",
+                    (data.get("birth_date",None), data.get("first_name",None), data.get("last_name",None), data.get("middle_name",None)))
+                new_contact = cur.fetchone()
+                addresses = data.get("addresses",None)
+                if addresses is not None and addresses.__class__ == list and len(addresses) > 0:
+                    new_addresses: list = []
+                    for add in addresses:
+                        cur.execute(
+                            "INSERT INTO " + self.address_table_name + " ( contact_id, country, title, postal_code, phone, province, city, street1, street2, email) VALUES ( %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING address_id, contact_id, country, title, postal_code, phone, province, city, street1, street2, email",
+                            ( new_contact.get("contact_id"), add.get("country",None), add.get("title",None), add.get("postal_code",None), add.get("phone",None), add.get("province",None), add.get("city",None), add.get("street1",None), add.get("street2",None), add.get("email",None))
+                        )
+                        new_addresses.append(cur.fetchone())
+                    new_contact["addresses"] = new_addresses
+                return new_contact
 
     def update(self, contact_id, data):
-        contact = self.get(contact_id)
-        contact.update(data)
-        return contact
-
+        c = self.get(contact_id)
+        c.update(data)
+        return c
     def delete(self, contact_id):
-        contact = self.get(contact_id)
-        self.contacts.remove(contact)
-
-contact_dao = ContactDAO()
-contact_dao.create({"first_name": "Build an API", "last_name": "SSS", "middle_name": "PPP"})
-contact_dao.create({"first_name": "?????", "last_name": "AAA", "middle_name": "TTT"})
-contact_dao.create({"first_name": "profit!", "last_name": "BBB", "middle_name": "QQQ"})
+        c = self.get(contact_id)
+        self.contacts.remove(c)
 
 @ns.route("/")
 class ContactList(Resource):
+
+    contact_dao = ContactDAO()
     """Shows a list of all contacts, and lets you POST to add new contacts"""
 
     @ns.doc("list_contacts")
     @ns.marshal_list_with(contact)
     def get(self):
         """List all contacts"""
-        return contact_dao.contacts
-
+        return self.contact_dao.contacts
     @ns.doc("create_contact")
     @ns.expect(contact)
     @ns.marshal_with(contact, code=201)
     def post(self):
         """Create a new contact"""
-        return contact_dao.create(api.payload), 201
+        return self.contact_dao.create(api.payload), 201
 
 @ns.route("/<string:contact_id>")
 @ns.response(404, "Contact not found")
 @ns.param("contact_id", "The contact identifier")
 class Contact(Resource):
+    contact_dao = ContactDAO()
+
     """Show a single contact item and lets you delete them"""
 
     @ns.doc("get_contact")
     @ns.marshal_with(contact)
     def get(self, contact_id):
         """Fetch a given resource"""
-        return contact_dao.get(contact_id)
+        return self.contact_dao.get(contact_id)
 
     @ns.doc("delete_contacts")
     @ns.response(204, "Contact deleted")
     def delete(self, contact_id):
         """Delete a contact given its identifier"""
-        contact_dao.delete(contact_id)
+        self.contact_dao.delete(contact_id)
         return "", 204
-
     @ns.expect(contact)
     @ns.marshal_with(contact)
     def put(self, contact_id):
         """Update a contact given its identifier"""
-        return contact_dao.update(contact_id, api.payload)
+        return self.contact_dao.update(contact_id, api.payload)
+
 
 
 if __name__ == "__main__":
-    ContactDAO().create_tables("aaa", "bbb", drop=True)
     app.run(debug=True)
-
 '''
+
+
+
 with psycopg.connect("dbname=test user=postgres") as conn:
 
     # Open a cursor to perform database operations
