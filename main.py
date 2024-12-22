@@ -90,10 +90,51 @@ class ContactDAO(object):
         self.contacts = []
 
     def get(self, contact_id):
-        for c in self.contacts:
-            if c["contact_id"] == contact_id:
-                return c
-        api.abort(404, "Contact {} doesn't exist".format(contact_id))
+        with psycopg.connect("user=" + self.DB_USER + " password=" + self.DB_PASS + " host=" + self.DB_HOST) as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute("SELECT " + self.contact_table_name + ".birth_date, " +
+                            self.contact_table_name + ".first_name, " +
+                            self.contact_table_name + ".last_name, " +
+                            self.contact_table_name + ".middle_name, " +
+                            self.contact_table_name + ".contact_id,  " +
+
+                            self.address_table_name + ".address_id, " +
+                            self.address_table_name + ".country, " +
+                            self.address_table_name + ".title, " +
+                            self.address_table_name + ".postal_code, " +
+                            self.address_table_name + ".phone, " +
+                            self.address_table_name + ".province, " +
+                            self.address_table_name + ".city, " +
+                            self.address_table_name + ".street1, " +
+                            self.address_table_name + ".street2, " +
+                            self.address_table_name + ".email " +
+
+                            " FROM " + self.contact_table_name + " left join " + self.address_table_name + " on " +
+                            self.contact_table_name + ".contact_id = " + self.address_table_name + ".contact_id where " +
+                            self.contact_table_name + ".contact_id=%s",(str(contact_id),))
+                contacts = cur.fetchall()
+                if len(contacts) == 0:
+                    api.abort(404, "Contact {} doesn't exist".format(contact_id))
+
+                addresses = []
+                for c in contacts:
+                    a = {"address_id": c.get("address_id", None), "country": c.get("country", None),
+                         "title": c.get("title", None), "postal_code": c.get("postal_code", None),
+                         "phone": c.get("phone", None), "province": c.get("province", None),
+                         "city": c.get("city", None), "street1": c.get("street1", None),
+                         "street2": c.get("street2", None), "email": c.get("email", None),
+                         "contact_id": c.get("contact_id", None)}
+                    addresses.append(a)
+
+                c1 = {"birth_date": contacts[0].get("birth_date", None),
+                      "first_name": contacts[0].get("first_name", None),
+                      "last_name": contacts[0].get("last_name", None),
+                      "middle_name": contacts[0].get("middle_name", None),
+                      "contact_id": contacts[0].get("contact_id", None), "addresses": addresses}
+
+                return c1
+
+
 
     def create(self, data):
         with psycopg.connect("user=" + self.DB_USER + " password=" + self.DB_PASS + " host=" + self.DB_HOST) as conn:
