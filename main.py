@@ -112,7 +112,6 @@ class ContactDAO(object):
 
                             " FROM " + self.contact_table_name + " left join " + self.address_table_name + " on " +
                             self.contact_table_name + ".contact_id = " + self.address_table_name + ".contact_id")
-                # " WHERE contact.contact_id in (43,44,45, 46, 47, 48, 49, 50)")
                 contacts = cur.fetchall()
                 if len(contacts) == 0:
                     api.abort(404, "Contacts Empty")
@@ -305,8 +304,15 @@ class ContactDAO(object):
                 return updated_contact
 
     def delete(self, contact_id):
-        c = self.get(contact_id)
-        self.contacts.remove(c)
+        with psycopg.connect("user=" + self.DB_USER + " password=" + self.DB_PASS + " host=" + self.DB_HOST) as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute("DELETE FROM " + self.contact_table_name +
+                            " WHERE contact_id=%s", (contact_id,))
+                cur.execute(
+                    "SELECT contact_id FROM " + self.address_table_name + " WHERE contact_id = %s", (contact_id,))
+                ad = cur.fetchone()
+                if ad is not None and len(ad) > 0:
+                    cur.execute("DELETE FROM " + self.address_table_name + " WHERE contact_id=%s", (contact_id,))
 
 @ns.route("/")
 class ContactList(Resource):
